@@ -1,0 +1,69 @@
+---
+title: "group-4-final-report"
+author: "Sriharsha Challangi, Kelvin Mai, Thanh Trung Do, Leah Padilla, Tien Hoang"
+format: docx
+editor: visual
+---
+
+# Final Report MATH 4322
+
+## Group 4
+
+Sriharsha Challangi, Kelvin Mai, Thanh Trung Do, Leah Padilla, Tien Hoang
+
+------------------------------------------------------------------------
+
+# 1. Introduction
+
+## The dataset contains:
+
+-   10,000 observations
+-   19 variables Each observation represents an individual student.
+
+## Description of Variables:
+
+### Response Variable
+
+-   Dropout: Binary variable indicating whether a student drops out. 0 =retained 1 =dropped out
+
+### Predictor Variables
+
+The dataset includes demographic, academic, and socioeconomic predictors:
+
+-   Age: Student age in years
+-   Gender: Male / Female
+-   Family_Income: Monthly family income
+-   Internet_Access: Whether the student has internet access (Yes/No)
+-   Study_Hours_per_Day: Average daily study hours
+-   Attendance_Rate: Percentage of classes attended
+-   Assignment_Delay_Days: Average delay in assignment submission (days)
+-   Travel_Time_Minutes: Daily commuting time (minutes)
+-   Part_Time_Job: Whether the student works part-time (Yes/No)
+-   Scholarship: Scholarship status (Yes/No)
+-   Stress_Index: Self-reported stress level on a scale from 1 to 10
+-   GPA, Semester_GPA, CGPA: Measures of academic performance
+-   Semester: Current year of study (1–4)
+-   Department: Academic department (Science, Arts, Business, CS, Engineering)
+-   Parental_Education: Highest education level of parents These predictors represent factors that may influence academic performance and the likelihood of student dropout.
+
+## Research Question:
+
+The primary goal of this project is to predict whether a student will drop out based on academic, demographic, and socioeconomic characteristics. More specifically, we aim to address the following research question:
+
+-   Can student demographic and academic factors accurately predict the probability of student dropout?
+
+Our main focus is prediction, but we also want to identify which variables are most strongly associated with dropout risk.
+
+------------------------------------------------------------------------
+
+# 2. Methods
+
+## Logistic Regression (Leah Padilla, Thanh Trung Do)
+
+## Decision Tree (Sriharsha Challangi, Kelvin Mai, Tien Hoang)
+
+# 3. Results
+
+# 4. Conclusion
+
+# 5. Bibliography
