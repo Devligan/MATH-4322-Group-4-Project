@@ -211,11 +211,15 @@ data$Semester <- as.factor(data$Semester)
 
 ### Fit a Full Random Forest Model
 
-$$Dropout \sim Age + Gender + FamilyIncome + InternetAccess +
-          StudyHoursperDay + AttendanceRate + AssignmentDelayDays +
-          TravelTimeMinutes + PartTimeJob + Scholarship +
-          StressIndex + GPA + SemesterGPA + CGPA + Semester +
-          Department + ParentalEducation$$
+$$
+\begin{aligned}
+\text{Dropout} \sim\;& \text{Age} + \text{Gender} + \text{FamilyIncome} + \text{InternetAccess} \\
+&+ \text{StudyHoursperDay} + \text{AttendanceRate} + \text{AssignmentDelayDays} \\
+&+ \text{TravelTimeMinutes} + \text{PartTimeJob} + \text{Scholarship} \\
+&+ \text{StressIndex} + \text{GPA} + \text{SemesterGPA} + \text{CGPA} \\
+&+ \text{Semester} + \text{Department} + \text{ParentalEducation}
+\end{aligned}
+$$
 
 We first fit a full random forest model using all predictors. For classification problems, the number of variables considered at each split is typically set to:
 
@@ -226,9 +230,11 @@ library(randomForest) #load library
 
 #Fit the model
 set.seed(123)
-rf.dropout <- randomForest(Dropout ~ .,data = data, ntree=500, importance=TRUE) 
+# number of predictors (exclude response)
+p <- ncol(data) - 1
+rf.dropout <- randomForest(Dropout ~ .,data = data, ntree=500, mtry = floor(sqrt(p)), importance=TRUE) 
 
-rf.dropout
+cat(paste(strwrap(capture.output(rf.dropout), width = 80), collapse = "\n"))
 varImpPlot(rf.dropout)
 ```
 
@@ -241,13 +247,14 @@ $$Dropout \sim AttendanceRate +
           StressIndex + GPA + SemesterGPA + CGPA$$
 
 ```{r}
+options(width = 20)
 rf.reduced <- randomForest(Dropout ~ Attendance_Rate + Stress_Index + GPA + Semester_GPA + CGPA,
                            data = data,
                            ntree = 500,
                            mtry = floor(sqrt(5)),
                            importance = TRUE)
 
-rf.reduced
+cat(paste(strwrap(capture.output(rf.reduced), width = 80), collapse = "\n"))
 ```
 
 Although the reduced model is simpler, its misclassification error is higher than the full model. This suggests that additional predictors still contribute useful information to the model. Therefore, we retain the full model for final analysis.
@@ -374,12 +381,13 @@ barplot(std_coefs[top_n:1], horiz = TRUE, las = 1,
 We evaluate the final random forest model using a confusion matrix with interpretable class labels (Yes = Dropout, No = Retained) instead of 0/1 encoding.
 
 ```{r}
+options(width = 100)
 library(caret)
 
-pred_class <- predict(rf.dropout, data)
+pred_class <- predict(rf_model, test)
 
 # Confusion matrix
-cm <- confusionMatrix(pred_class, data$Dropout, positive = "1")
+cm <- confusionMatrix(pred_class, test$Dropout, positive = "1")
 cm
 
 ```
