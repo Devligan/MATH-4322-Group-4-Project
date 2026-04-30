@@ -1,0 +1,454 @@
+---
+title: "Student Dropout Prediction"
+subtitle: "MATH 4322 - Group 4 Final Report"
+author: "Sriharsha Challangi, Kelvin Mai, Thanh Trung Do, Leah Padilla, Tien Hoang"
+date: "Spring 2026"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 7, fig.height = 5)
+```
+
+\newpage
+
+# Introduction
+
+## Data Description (Thanh Trung Do, Leah Padilla)
+
+The dataset is the **Student Dropout Prediction Dataset** from Kaggle (Ali, 2024), containing 10,000 student records with 18 predictor variables and 1 binary response variable.
+
+**Response variable:**
+
+- `Dropout`: Binary (0 = retained, 1 = dropped out)
+
+**Predictor variables (inputs):**
+
+- *Demographic*: Age, Gender (Male/Female), Family_Income, Parental_Education (None, High School, Bachelor, Master, PhD)
+- *Academic*: GPA, Semester_GPA, CGPA, Semester (Year 1--4), Department (Science, Arts, Business, CS, Engineering)
+- *Behavioral*: Study_Hours_per_Day, Attendance_Rate, Assignment_Delay_Days, Travel_Time_Minutes, Stress_Index (1--10)
+- *Socioeconomic*: Internet_Access (Yes/No), Part_Time_Job (Yes/No), Scholarship (Yes/No)
+
+Three variables (`Family_Income`, `Study_Hours_per_Day`, `Stress_Index`) have 500 missing values each (5%), which we imputed with their respective medians.
+
+## Research Question
+
+**Which factors affect whether a student drops out, and can we accurately predict student dropout?**
+
+The response variable is `Dropout` (binary: 0 or 1), making this a classification problem.
+
+\newpage
+
+# Methods
+
+## Logistic Regression (Thanh Trung Do, Leah Padilla)
+
+### Why Logistic Regression?
+
+Logistic regression is appropriate because our response variable is binary (Dropout = 0 or 1). As discussed in Lecture 8, logistic regression models the probability that $Y$ belongs to one of two categories, and the output is always between 0 and 1 (unlike linear regression, which can predict values outside this range).
+
+**Advantages:**
+
+- Provides interpretable coefficients: each $\hat{\beta}_j$ tells us the change in log-odds per unit increase in $X_j$.
+- Outputs probabilities, allowing flexible threshold selection.
+- Computationally efficient and well-suited for inference (significance testing of predictors).
+
+**Disadvantages:**
+
+- Assumes a linear relationship between predictors and log-odds, which may not capture complex nonlinear patterns.
+- Can be unstable when classes are well-separated (Lecture 10).
+- May underperform compared to tree-based methods when interactions between predictors are important.
+
+### Model Formula
+
+The logistic regression model is:
+
+$$\log\left(\frac{P(\text{Dropout} = 1 \mid X)}{1 - P(\text{Dropout} = 1 \mid X)}\right) = \beta_0 + \beta_1 X_1 + \beta_2 X_2 + \cdots + \beta_p X_p$$
+
+where the left-hand side is the log-odds (logit), and $X_1, \ldots, X_p$ are the 18 predictor variables. The predicted probability is:
+
+$$P(\text{Dropout} = 1 \mid X) = \frac{\exp(\beta_0 + \beta_1 X_1 + \cdots + \beta_p X_p)}{1 + \exp(\beta_0 + \beta_1 X_1 + \cdots + \beta_p X_p)}$$
+
+We estimate $\beta_0, \beta_1, \ldots, \beta_p$ using maximum likelihood. In R: `glm(Dropout ~ ., family = binomial)`.
+
+### Thought Process for Model Fitting
+
+After fitting the full model with all 18 predictors, we examine the p-values from the `summary()` output. Predictors with large p-values are not statistically significant and may be excluded. We also use **stepwise selection (AIC)** to find a more parsimonious model and compare it against the full model.
+
+### Data Preprocessing
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+
+data <- read.csv("student_dropout_dataset_v3.csv")
+
+data$Family_Income[is.na(data$Family_Income)] <- median(data$Family_Income, na.rm = TRUE)
+data$Study_Hours_per_Day[is.na(data$Study_Hours_per_Day)] <- median(data$Study_Hours_per_Day, na.rm = TRUE)
+data$Stress_Index[is.na(data$Stress_Index)] <- median(data$Stress_Index, na.rm = TRUE)
+
+data$Student_ID <- NULL
+data$Gender <- as.factor(data$Gender)
+data$Internet_Access <- as.factor(data$Internet_Access)
+data$Part_Time_Job <- as.factor(data$Part_Time_Job)
+data$Scholarship <- as.factor(data$Scholarship)
+data$Semester <- as.factor(data$Semester)
+data$Department <- as.factor(data$Department)
+data$Parental_Education <- as.factor(data$Parental_Education)
+data$Dropout <- as.factor(data$Dropout)
+```
+
+```{r}
+cat("Dropout distribution:\n")
+table(data$Dropout)
+cat("\nDropout rate:", round(mean(data$Dropout == "1") * 100, 2), "%\n")
+```
+
+### Train/Test Subdivision (80/20, repeated 10 times)
+
+We randomly subdivide the data into 80% training and 20% testing. We repeat this 10 times using `set.seed()` and record the test prediction error (misclassification rate) for each iteration.
+
+```{r}
+seeds <- 1:10
+n <- nrow(data)
+
+resample_results <- data.frame(
+  Iteration = integer(),
+  Error_Rate = numeric(),
+  Accuracy = numeric(),
+  Sensitivity = numeric(),
+  Specificity = numeric()
+)
+
+for (s in seeds) {
+  set.seed(s)
+  idx <- sample(1:n, 0.8 * n)
+  tr <- data[idx, ]
+  te <- data[-idx, ]
+
+  model <- glm(Dropout ~ ., data = tr, family = binomial)
+  prob <- predict(model, newdata = te, type = "response")
+  pred <- ifelse(prob > 0.5, 1, 0)
+  pred <- factor(pred, levels = c(0, 1))
+
+  cm <- table(Predicted = pred, Actual = te$Dropout)
+  tp <- cm["1", "1"]; tn <- cm["0", "0"]
+  fp <- cm["1", "0"]; fn <- cm["0", "1"]
+
+  resample_results <- rbind(resample_results, data.frame(
+    Iteration = s,
+    Error_Rate = 1 - (tp + tn) / sum(cm),
+    Accuracy = (tp + tn) / sum(cm),
+    Sensitivity = tp / (tp + fn),
+    Specificity = tn / (tn + fp)
+  ))
+}
+
+rownames(resample_results) <- NULL
+round(resample_results, 4)
+```
+
+```{r}
+cat("Mean test prediction error across 10 iterations:",
+    round(mean(resample_results$Error_Rate), 4), "\n")
+```
+
+\newpage
+
+## Random Forest (Sriharsha Challangi, Kelvin Mai, Tien Hoang)
+
+### Why Random Forest?
+
+Random forest builds an ensemble of decision trees, each trained on a random bootstrap 
+sample of the data, and averages their predictions. Compared to a single decision tree, 
+random forest reduces variance through this aggregation, leading to more stable and accurate 
+predictions. Compared to logistic regression, random forest can capture nonlinear 
+relationships and interactions among predictors without requiring any distributional 
+assumptions. The main disadvantage is reduced interpretability: unlike logistic regression, 
+which produces explicit coefficients, random forest does not provide a single clear model 
+structure.
+
+### Data Preprocessing
+
+Since the Random Forest algorithm does not handle missing data directly, the observations with missing values were removed prior to model fitting.
+
+```{r}
+n_total <- nrow(data)
+n_missing <- sum(!complete.cases(data)) #count how many observations (rows) have NA values.
+ 
+percent_missing <- n_missing / n_total * 100
+percent_missing #percentage of missing rows
+```
+
+Only a small proportion of observations (about 5%) contain missing values. Therefore, removing these rows is reasonable and does not significantly reduce the dataset size.
+
+```{r}
+data <- na.omit(data)
+```
+
+We also remove the identifier variable and ensure categorical variables are correctly encoded as factors.
+
+```{r}
+#Drop Student_ID column
+data$Student_ID <- NULL
+
+#make sure the categorical variables are factors
+data$Gender <- as.factor(data$Gender)
+data$Internet_Access <- as.factor(data$Internet_Access)
+data$Part_Time_Job <- as.factor(data$Part_Time_Job)
+data$Scholarship <- as.factor(data$Scholarship)
+data$Department <- as.factor(data$Department)
+data$Parental_Education <- as.factor(data$Parental_Education)
+data$Semester <- as.factor(data$Semester)
+
+```
+
+### Fit a Full Random Forest Model
+
+$$Dropout \sim Age + Gender + FamilyIncome + InternetAccess +
+          StudyHoursperDay + AttendanceRate + AssignmentDelayDays +
+          TravelTimeMinutes + PartTimeJob + Scholarship +
+          StressIndex + GPA + SemesterGPA + CGPA + Semester +
+          Department + ParentalEducation$$
+
+We first fit a full random forest model using all predictors. For classification problems, the number of variables considered at each split is typically set to:
+
+where p is the number of predictors. We use 500 trees to ensure model stability and reduce variance.
+
+```{r}
+library(randomForest) #load library
+
+#Fit the model
+set.seed(123)
+rf.dropout <- randomForest(Dropout ~ .,data = data, ntree=500, importance=TRUE) 
+
+rf.dropout
+varImpPlot(rf.dropout)
+```
+
+The variable importance plot shows that GPA, Semester GPA, CGPA, Stress level, and Attendance Rate are the most important predictors of student dropout.
+
+### Reduced Model
+
+We now fit a reduced model using only the five most important predictors identified above:
+$$Dropout \sim AttendanceRate +
+          StressIndex + GPA + SemesterGPA + CGPA$$
+
+```{r}
+rf.reduced <- randomForest(Dropout ~ Attendance_Rate + Stress_Index + GPA + Semester_GPA + CGPA,
+                           data = data,
+                           ntree = 500,
+                           mtry = floor(sqrt(5)),
+                           importance = TRUE)
+
+rf.reduced
+```
+
+Although the reduced model is simpler, its misclassification error is higher than the full model. This suggests that additional predictors still contribute useful information to the model. Therefore, we retain the full model for final analysis.
+
+### Train/Test Subdivision (80/20, repeated 10 times)
+
+To evaluate model stability, we repeat an 80/20 train-test split 10 times and compute the average test error rate.
+
+```{r}
+errors <- numeric(10)
+
+for(i in 1:10){
+
+  set.seed(i)
+  
+  # 80/20 split
+  train_index <- sample(1:nrow(data), 0.8 * nrow(data))
+  
+  train <- data[train_index, ]
+  test  <- data[-train_index, ]
+  
+  # number of predictors (exclude response)
+  p <- ncol(train) - 1
+  
+  # fit random forest
+  rf_model <- randomForest(Dropout ~ ., data = train, mtry = floor(sqrt(p)), ntree = 500)
+  
+  # predictions
+  pred_class  <- predict(rf_model, test)
+  
+  # misclassification error
+  errors[i] <- mean(pred_class != test$Dropout)
+}
+
+# mean test error
+mean_error <- mean(errors)
+mean_error
+```
+
+The average test misclassification error across the 10 iterations is approximately `r round(mean_error, 4)`, indicating stable predictive performance of the random forest model across different train-test splits.
+
+\newpage
+
+# Results
+
+## Logistic Regression
+
+### Model Summary
+
+We fit the logistic regression on the full dataset to examine which predictors are significant.
+
+```{r}
+data_num <- data
+data_num$Dropout <- as.numeric(data_num$Dropout) - 1
+fit.full <- glm(Dropout ~ ., data = data_num, family = binomial)
+summary(fit.full)
+```
+
+### Stepwise Model Selection
+
+```{r}
+step_model <- step(fit.full, direction = "both", trace = 0)
+cat("Full model AIC: ", AIC(fit.full), "\n")
+cat("Stepwise model AIC:", AIC(step_model), "\n")
+```
+
+```{r}
+anova(step_model, fit.full, test = "Chisq")
+```
+
+### Test Prediction Error
+
+```{r, fig.width=7, fig.height=4}
+plot(resample_results$Iteration, resample_results$Error_Rate,
+     type = "b", pch = 19, col = "tomato",
+     xlab = "Iteration", ylab = "Test Error Rate",
+     main = "Test Error Rate Across 10 Random 80/20 Subdivisions")
+abline(h = mean(resample_results$Error_Rate), lty = 2, col = "blue")
+legend("topright",
+       legend = paste("Mean =", round(mean(resample_results$Error_Rate), 4)),
+       lty = 2, col = "blue")
+```
+
+```{r}
+cat("=== Logistic Regression - Prediction Error Summary ===\n\n")
+cat("Mean test error (10 iterations):", round(mean(resample_results$Error_Rate), 4), "\n")
+cat("SD of test error:               ", round(sd(resample_results$Error_Rate), 4), "\n")
+cat("Mean accuracy:                  ", round(mean(resample_results$Accuracy), 4), "\n")
+```
+
+### Variable Importance
+
+```{r, fig.height=6}
+num_vars <- c("Age", "Family_Income", "Study_Hours_per_Day", "Attendance_Rate",
+              "Assignment_Delay_Days", "Travel_Time_Minutes", "Stress_Index",
+              "GPA", "Semester_GPA", "CGPA")
+train_scaled <- data_num
+for (col in num_vars) {
+  mu <- mean(data_num[[col]]); s <- sd(data_num[[col]])
+  train_scaled[[col]] <- (data_num[[col]] - mu) / s
+}
+model_scaled <- glm(Dropout ~ ., data = train_scaled, family = binomial)
+std_coefs <- sort(abs(coef(model_scaled)[-1]), decreasing = TRUE)
+top_n <- min(15, length(std_coefs))
+par(mar = c(5, 10, 3, 2))
+barplot(std_coefs[top_n:1], horiz = TRUE, las = 1,
+        col = "steelblue", border = NA,
+        main = "Top Predictors (|Standardized Coefficients|)",
+        xlab = "|Standardized Coefficient|")
+```
+
+### Interpretation
+
+- **Academic performance** variables (GPA, CGPA, Semester_GPA) are among the strongest predictors. Students with lower GPAs have significantly higher odds of dropping out.
+- **Behavioral factors** such as Attendance_Rate and Study_Hours_per_Day are also significant.
+- The model achieves a **mean test error rate** of `r round(mean(resample_results$Error_Rate), 4)` across 10 random 80/20 subdivisions, with low standard deviation (`r round(sd(resample_results$Error_Rate), 4)`), confirming stable predictive performance.
+
+\newpage
+
+## Random Forest
+
+### Model Summary
+
+We evaluate the final random forest model using a confusion matrix with interpretable class labels (Yes = Dropout, No = Retained) instead of 0/1 encoding.
+
+```{r}
+library(caret)
+
+pred_class <- predict(rf.dropout, data)
+
+# Confusion matrix
+cm <- confusionMatrix(pred_class, data$Dropout, positive = "1")
+cm
+
+```
+
+### Model Performance
+
+From the confusion matrix, we compute accuracy and error rate:
+
+```{r}
+rf.accuracy   <- sum(diag(cm$table)) / sum(cm$table)
+rf.error_rate <- 1 - rf.accuracy
+
+rf.accuracy
+rf.error_rate
+```
+
+The model achieves an accuracy of `r round(rf.accuracy, 4)` The corresponding misclassification error rate is `r round(rf.error_rate, 4)` Overall, the results suggest that the random forest model performs well in classifying student dropout status, with strong predictive accuracy and relatively low error.
+
+### Variable Importance
+
+```{r}
+varImpPlot(rf.dropout)
+```
+
+### Interpretation
+
+The results show that **GPA**, **Semester GPA**, and **CGPA** are consistently the strongest predictors of student dropout, indicating that academic performance plays a central role in student retention.
+
+In addition, **Stress Index** and **Attendance Rate** are also highly important, suggesting that both psychological well-being and class engagement significantly affect dropout probability.
+
+# Conclusion
+
+Compare and interpret the result from the two models.
+
+## Logistic regression
+
+- Logistic regression achieves a mean test prediction error of **`r round(mean(resample_results$Error_Rate), 4)`** across 10 random subdivisions (80/20).
+- The significant predictors (GPA, Attendance_Rate, Study_Hours_per_Day, etc.) align with domain knowledge about student success factors.
+- The low standard deviation across iterations confirms model stability.
+
+## Random forest
+
+- The random forest model achieves a mean test prediction error of **`r round(mean_error, 4)`** across 10 random 80/20 subdivisions.
+- The most important predictors (GPA, Semester_GPA, CGPA, Stress_Index, Attendance_Rate)
+align with the logistic regression findings and domain knowledge about student success factors.
+- The full model outperformed the reduced 5-predictor model (OOB error 19.48% vs 20.41%),
+confirming that additional predictors beyond academic performance still contribute useful signal.
+
+## Model Comparison
+
+- Both models achieved similar mean test prediction errors: logistic regression at **0.1882** and random forest at **`r round(mean_error, 4)`** across 10 random 80/20 subdivisions.
+- Both models identified the same key predictors (GPA, Semester_GPA, CGPA, Stress_Index,and Attendance_Rate) as the strongest drivers of student dropout.
+- Logistic regression offers greater interpretability through explicit coefficients, while random forest captures nonlinear relationships without distributional assumptions.
+- Both models are limited by class imbalance (76.5% retained), resulting in sensitivity
+of around 40% for both models.
+
+
+\newpage
+
+# References
+
+1.  Ali, M. (2024). Student Dropout Prediction Dataset. Kaggle. <https://www.kaggle.com/datasets/meharshanali/student-dropout-prediction-dataset>
+
+2.  James, G., Witten, D., Hastie, T., & Tibshirani, R. (2021). *An Introduction to Statistical Learning with Applications in R* (2nd ed.). Springer.
+
+3.  R Core Team (2025). R: A Language and Environment for Statistical Computing. <https://www.R-project.org/>
+
+\newpage
+
+# Appendix: Full R Source Code
+
+*The full R source code is attached separately.*
