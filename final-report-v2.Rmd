@@ -89,6 +89,7 @@ library(corrplot)
 
 data <- read.csv("student_dropout_dataset_v3.csv")
 
+# handling missing data
 data$Family_Income[is.na(data$Family_Income)] <- median(data$Family_Income, na.rm = TRUE)
 data$Study_Hours_per_Day[is.na(data$Study_Hours_per_Day)] <- median(data$Study_Hours_per_Day, na.rm = TRUE)
 data$Stress_Index[is.na(data$Stress_Index)] <- median(data$Stress_Index, na.rm = TRUE)
