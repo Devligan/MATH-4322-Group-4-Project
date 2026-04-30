@@ -1,0 +1,348 @@
+---
+title: "Student Dropout Prediction - Decision Tree"
+author: "Kelvin Mai"
+date: "Spring 2026"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## 1. Introduction
+
+The goal of this analysis is to predict whether a student will drop out (Dropout = 1) or be retained (Dropout = 0) using a Decision Tree classifier. The dataset contains 10,000 student records with 18 predictor variables covering demographics, academic performance, and behavioral factors. We evaluate model stability by testing different tree depths and performing 5-fold cross-validation across multiple random seeds.
+
+## 2. Load Libraries
+
+```{r libraries}
+library(ggplot2)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+library(caret)
+```
+
+## 3. Load Data
+
+```{r load_data}
+data <- read.csv("student_dropout_dataset_v3.csv")
+dim(data)
+head(data)
+```
+
+## 4. Check Missing Values
+
+```{r missing_values}
+missing_counts <- colSums(is.na(data))
+missing_counts[missing_counts > 0]
+```
+
+```{r parental_check}
+cat("Blank entries in Parental_Education:",
+    sum(data$Parental_Education == "" | is.na(data$Parental_Education)), "\n")
+```
+
+Three variables have 500 missing values each: Family_Income, Study_Hours_per_Day, and Stress_Index. Since only 5% of observations are affected per column, we impute with the median. Missing values are assumed to be approximately random (MAR); median imputation is appropriate given the low missingness rate and the non-parametric nature of the decision tree. We also check for blank entries in Parental_Education and replace them with the most frequent category.
+
+## 5. Data Preprocessing
+
+```{r preprocessing}
+data$Family_Income[is.na(data$Family_Income)] <-
+  median(data$Family_Income, na.rm = TRUE)
+data$Study_Hours_per_Day[is.na(data$Study_Hours_per_Day)] <-
+  median(data$Study_Hours_per_Day, na.rm = TRUE)
+data$Stress_Index[is.na(data$Stress_Index)] <-
+  median(data$Stress_Index, na.rm = TRUE)
+data$Parental_Education[data$Parental_Education == "" |
+                          is.na(data$Parental_Education)] <-
+  names(sort(table(
+    data$Parental_Education[data$Parental_Education != ""]
+  ), decreasing = TRUE))[1]
+
+cat("Remaining NAs:", sum(is.na(data)), "\n")
+
+data$Student_ID      <- NULL
+
+data$Gender             <- as.factor(data$Gender)
+data$Internet_Access    <- as.factor(data$Internet_Access)
+data$Part_Time_Job      <- as.factor(data$Part_Time_Job)
+data$Scholarship        <- as.factor(data$Scholarship)
+data$Semester           <- as.factor(data$Semester)
+data$Department         <- as.factor(data$Department)
+data$Parental_Education <- as.factor(data$Parental_Education)
+data$Dropout            <- as.factor(data$Dropout)
+
+cat("Dropout distribution:\n")
+table(data$Dropout)
+cat("\nDropout rate:", round(mean(data$Dropout == "1") * 100, 2), "%\n")
+```
+
+## 6. Exploratory Data Analysis
+
+### 6.1 Dropout Distribution
+
+```{r eda_dropout}
+ggplot(data, aes(x = Dropout, fill = Dropout)) +
+  geom_bar(width = 0.5) +
+  scale_fill_manual(values = c("0" = "steelblue", "1" = "tomato"),
+                    labels = c("Retained", "Dropped Out")) +
+  labs(title = "Distribution of Dropout Status",
+       x = "Dropout", y = "Count") +
+  theme_minimal()
+```
+
+The dataset is imbalanced: approximately 76.5% of students were retained and 23.5% dropped out. This imbalance is important to keep in mind when interpreting sensitivity, as a model that always predicts "retained" would achieve ~76.5% accuracy without learning anything meaningful.
+
+### 6.2 GPA Distribution by Dropout Status
+
+```{r eda_gpa}
+ggplot(data, aes(x = GPA, fill = Dropout)) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = c("0" = "steelblue", "1" = "tomato"),
+                    labels = c("Retained", "Dropped Out")) +
+  labs(title = "GPA Distribution by Dropout Status",
+       x = "GPA", y = "Density") +
+  theme_minimal()
+```
+
+Dropped-out students are concentrated at lower GPA values (roughly below 2.0), while retained students span a wider and higher range. This strong visual separation suggests GPA will be an important predictor in the tree.
+
+Note that GPA, Semester_GPA, and CGPA are all measures of academic performance and are highly correlated. Decision trees handle correlated predictors by selecting whichever split is most informative at each node, so one of the three will dominate and the others will add marginal importance.
+
+### 6.3 Attendance Rate and Stress Index by Dropout Status
+
+```{r eda_boxplots}
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+boxplot(Attendance_Rate ~ Dropout, data = data,
+        col = c("steelblue", "tomato"),
+        main = "Attendance Rate", xlab = "Dropout", ylab = "Attendance Rate")
+boxplot(Stress_Index ~ Dropout, data = data,
+        col = c("steelblue", "tomato"),
+        main = "Stress Index", xlab = "Dropout", ylab = "Stress Index")
+```
+
+Attendance rate distributions overlap substantially between retained and dropped-out students, suggesting it is a weaker standalone predictor. Stress index shows a modest shift upward for dropout students, indicating higher stress is associated with dropout risk.
+
+## 7. Train/Test Split
+
+We randomly split the data into 70% training and 30% testing, following the validation set approach covered in class.
+
+```{r split}
+set.seed(42)
+train      <- sample(1:nrow(data), 0.7 * nrow(data))
+train_data <- data[train, ]
+test_data  <- data[-train, ]
+
+cat("Training set:", nrow(train_data), "observations\n")
+cat("Test set:    ", nrow(test_data),  "observations\n")
+```
+
+## 8. Selecting Tree Depth
+
+Before fitting the final model, we test different values of maxdepth to find the best performing depth. We use `cp = 0.001` to allow the tree to grow at each depth and then read the internal cross-validation error (`xerror`) from the `cptable`.
+
+```{r depth_tuning}
+set.seed(42)
+depths        <- c(2, 3, 4, 5, 10, 15)
+depth_results <- data.frame(Depth = integer(), CV_Error = numeric())
+
+for (d in depths) {
+  model_d  <- rpart(Dropout ~ ., data = train_data, method = "class",
+                    control = rpart.control(maxdepth = d, cp = 0.001))
+  cp_table <- model_d$cptable
+  best_cp  <- cp_table[which.min(cp_table[, "xerror"]), ]
+  depth_results <- rbind(depth_results, data.frame(
+    Depth    = d,
+    CV_Error = round(best_cp["xerror"], 4)
+  ))
+}
+
+rownames(depth_results) <- NULL
+depth_results
+```
+
+Depth 4 produces the lowest CV error among the shallow depths. Depths 10 and 15 achieve slightly lower xerror values, but trees of that size are difficult to interpret and risk overfitting to training-specific noise. Depth 5 is marginally worse than depth 4 (difference of 0.0114) but introduces a split on Stress_Index, a behaviorally meaningful variable that GPA alone does not capture. We select **maxdepth = 5** as it offers a reasonable balance between predictive performance, interpretability, and capturing a broader set of risk factors without growing an unwieldy tree.
+
+## 9. Fit Decision Tree Model
+
+We fit the final model using `cp = 0.001` to be consistent with the depth tuning step. The default `cp = 0.01` prunes too aggressively and would reduce the tree to fewer than 3 splits regardless of depth.
+
+```{r decision_tree}
+tree_model <- rpart(Dropout ~ ., data = train_data, method = "class",
+                    control = rpart.control(maxdepth = 5, cp = 0.001))
+
+printcp(tree_model)
+```
+
+## 10. Visualize the Decision Tree
+
+```{r plot_tree}
+rpart.plot(tree_model, type = 4, extra = 102,
+           box.palette = "RdBu", shadow.col = "gray",
+           main = "Decision Tree (max depth = 5)")
+```
+
+## 11. Model Evaluation
+
+```{r evaluation}
+pred_class <- predict(tree_model, newdata = test_data, type = "class")
+pred_prob  <- predict(tree_model, newdata = test_data, type = "prob")[, 2]
+
+conf_matrix <- table(Predicted = pred_class, Actual = test_data$Dropout)
+conf_matrix
+
+TP <- conf_matrix["1", "1"]
+TN <- conf_matrix["0", "0"]
+FP <- conf_matrix["1", "0"]
+FN <- conf_matrix["0", "1"]
+
+accuracy    <- (TP + TN) / sum(conf_matrix)
+sensitivity <- TP / (TP + FN)
+specificity <- TN / (TN + FP)
+error_rate  <- 1 - accuracy
+
+cat("Accuracy:   ", round(accuracy,    4), "\n")
+cat("Error Rate: ", round(error_rate,  4), "\n")
+cat("Sensitivity:", round(sensitivity, 4), "\n")
+cat("Specificity:", round(specificity, 4), "\n")
+
+roc_obj <- roc(as.numeric(test_data$Dropout) - 1, pred_prob)
+cat("ROC-AUC:    ", round(auc(roc_obj), 4), "\n")
+```
+
+```{r roc_plot}
+plot(roc_obj,
+     col  = "steelblue", lwd = 2,
+     main = paste0("ROC Curve - Decision Tree (AUC = ",
+                   round(auc(roc_obj), 3), ")"))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+```
+
+Accuracy and specificity are reasonable, but sensitivity is low. The model correctly identifies roughly 39% of actual dropout cases, meaning it misses the majority. This is a direct consequence of class imbalance: with roughly 3 retained students for every 1 dropout, the tree is incentivized to predict "retained" more often. The ROC-AUC provides a threshold-independent view of discrimination ability.
+
+## 12. Resampling with Different Seeds
+
+The validation set approach depends on the random split. We evaluate the model using 5 different random seeds to check stability.
+
+```{r resampling}
+seeds <- c(42, 123, 456, 789, 2026)
+resample_results <- data.frame(
+  Seed        = integer(),
+  Accuracy    = numeric(),
+  Error_Rate  = numeric(),
+  Sensitivity = numeric(),
+  Specificity = numeric()
+)
+
+for (s in seeds) {
+  set.seed(s)
+  idx <- sample(1:nrow(data), 0.7 * nrow(data))
+  tr  <- data[idx, ]
+  te  <- data[-idx, ]
+
+  model  <- rpart(Dropout ~ ., data = tr, method = "class",
+                  control = rpart.control(maxdepth = 5, cp = 0.001))
+  pred_c <- predict(model, newdata = te, type = "class")
+  cm     <- table(Predicted = pred_c, Actual = te$Dropout)
+
+  tp <- cm["1", "1"]
+  tn <- cm["0", "0"]
+  fp <- cm["1", "0"]
+  fn <- cm["0", "1"]
+
+  resample_results <- rbind(resample_results, data.frame(
+    Seed        = s,
+    Accuracy    = round((tp + tn) / sum(cm),   4),
+    Error_Rate  = round(1 - (tp + tn) / sum(cm), 4),
+    Sensitivity = round(tp / (tp + fn),          4),
+    Specificity = round(tn / (tn + fp),          4)
+  ))
+}
+
+rownames(resample_results) <- NULL
+resample_results
+
+cat("\n=== Average Performance Across 5 Seeds ===\n")
+cat("Accuracy:   ", round(mean(resample_results$Accuracy),    4),
+    " (SD:", round(sd(resample_results$Accuracy),    4), ")\n")
+cat("Error Rate: ", round(mean(resample_results$Error_Rate),  4),
+    " (SD:", round(sd(resample_results$Error_Rate),  4), ")\n")
+cat("Sensitivity:", round(mean(resample_results$Sensitivity), 4),
+    " (SD:", round(sd(resample_results$Sensitivity), 4), ")\n")
+cat("Specificity:", round(mean(resample_results$Specificity), 4),
+    " (SD:", round(sd(resample_results$Specificity), 4), ")\n")
+```
+
+Accuracy and specificity are stable across seeds (low SD). Sensitivity shows more variability, which is expected given the class imbalance: small differences in how the minority class is distributed across splits can noticeably affect the true positive rate.
+
+## 13. Cross-Validation
+
+We use 5-fold cross-validation across multiple seeds to further validate model stability, as introduced in class.
+
+```{r cross_validation}
+cv_seeds   <- c(42, 123, 456, 789, 2026)
+cv_results <- data.frame(Seed = integer(), CV_Error = numeric())
+
+for (s in cv_seeds) {
+  set.seed(s)
+  folds       <- createFolds(data$Dropout, k = 5, list = TRUE)
+  fold_errors <- c()
+
+  for (fold in folds) {
+    tr     <- data[-fold, ]
+    te     <- data[fold, ]
+    model  <- rpart(Dropout ~ ., data = tr, method = "class",
+                    control = rpart.control(maxdepth = 5, cp = 0.001))
+    pred_c <- predict(model, newdata = te, type = "class")
+    fold_errors <- c(fold_errors, mean(pred_c != te$Dropout))
+  }
+
+  cv_results <- rbind(cv_results, data.frame(
+    Seed     = s,
+    CV_Error = round(mean(fold_errors), 4)
+  ))
+}
+
+rownames(cv_results) <- NULL
+cv_results
+
+cat("\nMean CV error:", round(mean(cv_results$CV_Error), 4), "\n")
+cat("SD of CV error:",
+    format(round(sd(cv_results$CV_Error), 4), scientific = FALSE), "\n")
+```
+
+The very low standard deviation across seeds confirms that the 5-fold CV error estimate is stable and not sensitive to how the folds are assigned.
+
+## 14. Variable Importance
+
+Variable importance in `rpart` reflects how much each variable reduces node impurity across all splits where it was used. Only variables selected in at least one split appear.
+
+```{r feature_importance}
+importance    <- tree_model$variable.importance
+importance_df <- data.frame(
+  Variable   = names(importance),
+  Importance = as.numeric(importance)
+) %>% arrange(desc(Importance))
+
+ggplot(importance_df,
+       aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Variable Importance - Decision Tree",
+       x = "Variable", y = "Importance Score") +
+  theme_minimal()
+```
+
+GPA dominates variable importance by a large margin, followed by Semester_GPA and CGPA. These three variables all measure academic performance and are highly correlated with one another. The tree effectively uses them interchangeably depending on the split, so their combined dominance reflects a single underlying signal: academic performance is the strongest predictor of dropout. Variables like Gender, Scholarship, and Department contributed negligibly and were not selected in any split.
+
+Stress_Index appears with modest importance, capturing a behavioral dimension that GPA alone does not. This is the primary reason for selecting depth 5 over depth 4.
+
+## 15. Conclusion
+
+The Decision Tree model with maxdepth = 5 and cp = 0.001 achieved an accuracy of `r round(accuracy, 3)` and a ROC-AUC of `r round(auc(roc_obj), 3)` on the test set (seed = 42). Across 5 random seeds, the model was stable with a mean accuracy of `r round(mean(resample_results$Accuracy), 3)` (SD = `r round(sd(resample_results$Accuracy), 4)`) and a mean error rate of `r round(mean(resample_results$Error_Rate), 3)` (SD = `r round(sd(resample_results$Error_Rate), 4)`). The 5-fold cross-validation gave a mean CV error of `r round(mean(cv_results$CV_Error), 4)` (SD = `r format(round(sd(cv_results$CV_Error), 4), scientific = FALSE)`).
+
+GPA was the dominant predictor of dropout, with Semester_GPA and CGPA also contributing. Because all three measure academic performance and are highly correlated, their combined importance reflects a single underlying factor rather than three independent signals. Stress_Index contributed modestly at deeper splits, capturing a behavioral dimension beyond grades alone.
+
+Sensitivity averaged approximately 37% across seeds, meaning the model missed roughly two-thirds of actual dropout cases. This is a known limitation of decision trees trained on imbalanced data: because the majority class (retained) is approximately three times larger, the tree minimizes overall error by predicting retained more often. Addressing this in a future iteration would require either adjusting the classification threshold, applying class weights, or using an ensemble method such as a random forest that is more robust to class imbalance.
