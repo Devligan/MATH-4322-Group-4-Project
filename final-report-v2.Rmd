@@ -176,22 +176,14 @@ structure.
 
 ### Data Preprocessing
 
-Since the Random Forest algorithm does not handle missing data directly, the observations with missing values were removed prior to model fitting.
+Since the Random Forest algorithm does not handle missing data directly, we need to handle all missing data prior to model fitting. All missing data have been handled in advance (section 2.1.4 Data Preprocessing). To verify all missing values have been handled:
 
 ```{r}
 n_total <- nrow(data)
 n_missing <- sum(!complete.cases(data)) #count how many observations (rows) have NA values.
- 
-percent_missing <- n_missing / n_total * 100
-percent_missing #percentage of missing rows
+
+n_missing
 ```
-
-Only a small proportion of observations (about 5%) contain missing values. Therefore, removing these rows is reasonable and does not significantly reduce the dataset size.
-
-```{r}
-data <- na.omit(data)
-```
-
 We also remove the identifier variable and ensure categorical variables are correctly encoded as factors.
 
 ```{r}
