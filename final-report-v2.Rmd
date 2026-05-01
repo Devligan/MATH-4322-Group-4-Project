@@ -303,6 +303,9 @@ cat("Stepwise model AIC:", AIC(step_model), "\n")
 ```{r}
 anova(step_model, fit.full, test = "Chisq")
 ```
+```{r}
+summary(step_model)
+```
 
 ### Test Prediction Error
 
@@ -470,6 +473,7 @@ confirming that additional predictors beyond academic performance still contribu
 - Both models are limited by class imbalance (76.5% retained), resulting in sensitivity
 of around 40% for both models.
 
+- While both models achieved similar test error rates, logistic regression is the preferred model for this problem as it matched or slightly outperformed random forest in predictive accuracy while offering direct interpretability through its coefficients.
 
 \newpage
 
@@ -483,6 +487,3 @@ of around 40% for both models.
 
 \newpage
 
-# Appendix: Full R Source Code
-
-*The full R source code is attached separately.*
