@@ -185,22 +185,6 @@ n_missing <- sum(!complete.cases(data)) #count how many observations (rows) have
 
 n_missing
 ```
-We also remove the identifier variable and ensure categorical variables are correctly encoded as factors.
-
-```{r}
-#Drop Student_ID column
-data$Student_ID <- NULL
-
-#make sure the categorical variables are factors
-data$Gender <- as.factor(data$Gender)
-data$Internet_Access <- as.factor(data$Internet_Access)
-data$Part_Time_Job <- as.factor(data$Part_Time_Job)
-data$Scholarship <- as.factor(data$Scholarship)
-data$Department <- as.factor(data$Department)
-data$Parental_Education <- as.factor(data$Parental_Education)
-data$Semester <- as.factor(data$Semester)
-
-```
 
 ### Fit a Full Random Forest Model
 
